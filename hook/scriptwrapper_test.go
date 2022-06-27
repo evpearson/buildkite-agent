@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestRunningHookDetectsChangedEnvironment(t *testing.T) {
+func TestRunningHookDetectsChangedEnvironmentWhenEnvVarIsArray(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -23,8 +23,10 @@ func TestRunningHookDetectsChangedEnvironment(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		script = []string{
 			"#!/bin/bash",
-			"export LLAMAS=rock",
-			"export Alpacas=\"are ok\"",
+			"CENTOS_75=\"centos75\"",
+			"CENTOS_76=\"centos76\"",
+			"export OS_VERSIONS=(\"$CENTOS_75\" \"$CENTOS_76\")",
+			"export PATH=home",
 			"echo hello world",
 		}
 	} else {
@@ -55,8 +57,66 @@ func TestRunningHookDetectsChangedEnvironment(t *testing.T) {
 	// case normalisation for us
 	expected := (&env.Environment{}).Apply(env.Diff{
 		Added: map[string]string{
-			"LLAMAS":  "rock",
-			"Alpacas": "are ok",
+			"OS_VERSIONS": "([0]=\"centos75\" [1]=\"centos75\"",
+			"PATH":        "home",
+		},
+		Changed: map[string]env.DiffPair{},
+		Removed: map[string]struct{}{},
+	})
+
+	actual := (&env.Environment{}).Apply(changes.Diff)
+
+	// The strict equals check here also ensures we aren't bubbling up the
+	// internal BUILDKITE_HOOK_EXIT_STATUS and BUILDKITE_HOOK_WORKING_DIR
+	// environment variables
+	assert.Equal(t, expected, actual)
+}
+
+func TestRunningHookDetectsChangedEnvironmentWhenEnvVarIsAssociativeArray(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	var script []string
+
+	if runtime.GOOS != "windows" {
+		script = []string{
+			"#!/bin/bash",
+			"CENTOS_75=\"centos75\"",
+			"CENTOS_76=\"centos76\"",
+			"export OS_VERSIONS=([$CENTOS_75]=\"7.5\" [$CENTOS_76]=\"7.6\")",
+			"export PATH=home",
+			"echo hello world",
+		}
+	} else {
+		script = []string{
+			"@echo off",
+			"set LLAMAS=rock",
+			"set Alpacas=are ok",
+			"echo hello world",
+		}
+	}
+
+	wrapper := newTestScriptWrapper(t, script)
+	defer os.Remove(wrapper.Path())
+
+	sh := shell.NewTestShell(t)
+
+	if err := sh.RunScript(ctx, wrapper.Path(), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := wrapper.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Windows’ batch 'SET >' normalises environment variables case so we apply
+	// the 'expected' and 'actual' diffs to a blank Environment which handles
+	// case normalisation for us
+	expected := (&env.Environment{}).Apply(env.Diff{
+		Added: map[string]string{
+			"OS_VERSIONS": "([centos75]=\"7.5\" [centos76]=\"7.6\"",
+			"PATH":        "home",
 		},
 		Changed: map[string]env.DiffPair{},
 		Removed: map[string]struct{}{},
